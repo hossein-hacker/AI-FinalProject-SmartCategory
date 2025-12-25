@@ -1,0 +1,5 @@
+data/raw/
+models/
+*.pt
+*.pth
+*.h5
