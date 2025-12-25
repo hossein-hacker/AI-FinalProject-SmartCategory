@@ -1,5 +1,9 @@
+# heavy and unneeded files
 data/raw/
 models/
 *.pt
 *.pth
 *.h5
+
+# Ignore the virtual environment
+venv/
