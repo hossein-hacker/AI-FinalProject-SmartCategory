@@ -25,6 +25,13 @@ The goal of this project is to design and implement an intelligent system based 
     ```
     **Note:** make sure you are in the virtual enviornment while installing
 
+## Dataset
+
+Due to GitHub file size limitations, the full dataset CSV is hosted externally on Google Drive.
+Please read *data/README.md* for exact instructions.
+
+This ensures full reproducibility without storing large files in the repository.
+
 # Folder Structure
 ```
 AI-FinalProject-ShopVision/
@@ -34,8 +41,8 @@ AI-FinalProject-ShopVision/
 ├── .gitignore
 │
 ├── data/
-│   ├── raw/              # original dataset (ignored by git)
-│   ├── processed/        # cleaned / resized images
+│   ├── raw/           # original dataset (ignored by git)
+│   ├── processed/     # cleaned / resized images
 │
 ├── notebooks/
 │   ├── 01_eda.ipynb

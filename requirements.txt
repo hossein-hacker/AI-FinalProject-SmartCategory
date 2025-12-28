@@ -12,3 +12,5 @@ tensorboard
 streamlit
 wandb
 grad-cam
+requests
+gdown

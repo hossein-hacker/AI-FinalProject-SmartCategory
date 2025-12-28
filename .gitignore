@@ -1,5 +1,5 @@
 # heavy and unneeded files
-data/raw/
+data/raw/products.csv
 models/
 *.pt
 *.pth

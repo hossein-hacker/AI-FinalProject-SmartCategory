@@ -1,0 +1,22 @@
+category_id,category_name,original_category_ids
+0,Arts Crafts & Educational Supplies,"1,4,6,155"
+1,Automotive & Vehicle Accessories,"19,22,26,78"
+2,Baby Essentials & Care,"42,129"
+3,Baby Clothing Gifts & Stationery,"39,40,43"
+4,Beauty Personal Care & Health,"46,48,52,127,131,163"
+5,Computers & Computing Accessories,"64,65,66,81"
+6,Consumer Electronics & Home Entertainment,"69,71,77,79,82"
+7,Mobile Phones & Accessories,75
+8,Gaming Consoles Games & Accessories,"83,253,254,255,260,261,262,263"
+9,Boys' Fashion & Accessories,"84,87,88,89,90"
+10,Girls' Fashion & Accessories,"91,94,95,96,97,98"
+11,Men's Fashion & Accessories,"110,112,113,114"
+12,Women's Fashion & Accessories,"116,118,120,121,122,123"
+13,Travel Luggage & Bags,"104,105,106,107,108,109"
+14,Gifts & Gift Cards,125
+15,Industrial Electrical & Scientific Equipment,"145,149,154,156,162,210"
+16,Home Improvement Tools & Building Supplies,"203,204,208,211,212,213,214,215"
+17,Home Kitchen & Appliances,"130,170,171,173,174,175,176,201"
+18,Smart Home & Automation,"188,189,191,193,206"
+19,Pets Sports Outdoors & Recreation,"178,179,180,181,198,199,200"
+20,Toys & Games,"217,218,223,227,230,233,234,235,236,237,238,239,270"
