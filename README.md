@@ -41,12 +41,13 @@ AI-FinalProject-ShopVision/
 ├── .gitignore
 │
 ├── data/
-│   ├── raw/           # original dataset (ignored by git)
-│   ├── processed/     # cleaned / resized images
+│   ├── raw/             # original dataset
+│   ├── preprocessing/   # scripts and cleaning stuff for dataset
+│   ├── processed/       # cleaned dataset
 │
 ├── notebooks/
 │   ├── 01_eda.ipynb
-│   ├── 02_preprocessing.ipynb
+│   ├── 02_dataset_analysis.ipynb
 │   ├── 03_baseline_model.ipynb
 │
 ├── src/
@@ -55,21 +56,21 @@ AI-FinalProject-ShopVision/
 │   │
 │   ├── models/
 │   │   ├── cnn_baseline.py
-│   │   └── resnet_model.py
+│   │   ├── resnet_model.py
 │   │
 │   ├── training/
-│   │   └── train.py
+│   │   ├── train.py
 │   │
 │   ├── evaluation/
-│   │   └── evaluate.py
+│   │   ├── evaluate.py
 │   │
-│   └── utils/
-│       └── config.py
+│   ├── utils/
+│       ├── config.py
 │
 ├── results/
 │   ├── figures/
-│   └── metrics/
+│   ├── metrics/
 │
 └── demo/
-    └── app.py
+    ├── app.py
 ```
