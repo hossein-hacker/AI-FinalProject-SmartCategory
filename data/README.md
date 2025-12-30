@@ -1,23 +1,25 @@
 
 # Dataset Information
 
-The full dataset CSV (~140MB) is not stored in the GitHub repository due to its size.
+The full dataset CSV (~280MB) is not stored in the GitHub repository due to its size.
 
 To download the full dataset, run in the project root:
 
 ```bash
-python src/preprocessing/download_csv.py
+python src/preprocessing/download_dataset.py
 ```
 
 The dataset will be downloaded to:
-*data/raw/products.csv*
+***data/processed/***
 
-**Note:** There is a *products_test.csv* dataset just for testing included in *data/raw* directory.
-
-The CSV contains the following columns:
+The products CSV contains the following columns:
 - asin
 - title
-- imageUrl
-- category_id
+- imgUrl
+- merged_category_id
 
-**Note:** the categories themselves are in the categories.csv in the *data/raw* directory, and doesn't need any download.
+The categories CSV has:
+- category_id (The original amazon category id)
+- category_name (The original amazon category name)
+- merged_category_name (The new merged category name)
+- merged_category_id (The new merged category id)
