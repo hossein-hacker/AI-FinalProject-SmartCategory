@@ -6,7 +6,7 @@ The full dataset CSV (~280MB) is not stored in the GitHub repository due to its 
 To download the full dataset, run in the project root:
 
 ```bash
-python src/preprocessing/download_dataset.py
+python data/preprocessing/download_dataset.py
 ```
 
 The dataset will be downloaded to:
