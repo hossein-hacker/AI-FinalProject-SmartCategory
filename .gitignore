@@ -9,5 +9,3 @@ models/
 
 # Ignore the virtual environment
 venv/
-
-.private/

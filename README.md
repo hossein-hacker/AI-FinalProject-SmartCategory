@@ -34,7 +34,7 @@ This ensures full reproducibility without storing large files in the repository.
 
 # Folder Structure
 ```
-AI-FinalProject-ShopVision/
+AI-FinalProject-SmartCategory/
 │
 ├── README.md
 ├── requirements.txt
