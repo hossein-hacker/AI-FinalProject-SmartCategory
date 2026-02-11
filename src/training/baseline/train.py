@@ -19,12 +19,16 @@ from sklearn.model_selection import train_test_split
 
 
 def main():
+    
+    torch.backends.cudnn.benchmark = True
+
+
     # CONFIG
     mapping_df = pd.read_csv('../../../data/processed/category_mapping.csv')
     NUM_CLASSES = mapping_df['merged_category_id'].nunique()
 
     IMAGE_SIZE = (224, 224)
-    BATCH_SIZE = 64
+    BATCH_SIZE = 128
     LEARNING_RATE = 1e-3
     NUM_EPOCHS = 10
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -233,17 +237,27 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss()
-    def train_one_epoch(model, loader, optimizer, criterion, device):
+    scaler = torch.cuda.amp.GradScaler(DEVICE)
+    def train_one_epoch(model, loader, optimizer, criterion, device, scaler):
         model.train()
         total_loss = 0.0
         for x, y in tqdm(loader, desc='Training'):
-            x, y = x.to(device), y.to(device)
+            # x, y = x.to(device), y.to(device)
+            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             optimizer.zero_grad()
-            outputs = model(x)
-            loss = criterion(outputs, y)
-            loss.backward()
-            optimizer.step()
+
+            # Runs the forward pass in mixed precision (Float16)
+            with torch.cuda.amp.autocast(DEVICE):
+                outputs = model(x)
+                loss = criterion(outputs, y)
+
+            # Scales loss and calls backward() to prevent underflow
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
             total_loss += loss.item()
+
         return total_loss / len(loader)
     def validate_one_epoch(model, loader, criterion, device):
         model.eval()
@@ -263,23 +277,34 @@ def main():
         return total_loss / len(loader), accuracy
 
     # ------------------------------------------------------------------------
-
+    
     history = {'train_loss': [], 'val_loss': [], 'val_accuracy': []}
     for epoch in range(NUM_EPOCHS):
-        print(f'--- Epoch {epoch+1}/{NUM_EPOCHS} ---')
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, DEVICE)
+        print(f'\n--- Epoch {epoch+1}/{NUM_EPOCHS} ---')
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, DEVICE, scaler)
         val_loss, val_accuracy = validate_one_epoch(model, val_loader, criterion, DEVICE)
         
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
         history['val_accuracy'].append(val_accuracy)
         
+        epoch_loss = train_loss / len(train_loader)
+
         print(f'Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Accuracy: {val_accuracy:.2f}%')
+
+        # SAVE CHECKPOINT
+        checkpoint_path = f"../../models/baseline/checkpoint_epoch_{epoch+1}.pth"
+        torch.save({
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': epoch_loss,
+        }, checkpoint_path)
+        print(f"Saved checkpoint to {checkpoint_path}")
 
     print('--- Training Complete ---')
 
-        # ------------------------------------------------------------------------
-
+    # ------------------------------------------------------------------------
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
