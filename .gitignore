@@ -9,3 +9,12 @@ models/
 
 # Ignore the virtual environment
 venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
