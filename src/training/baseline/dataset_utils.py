@@ -33,7 +33,7 @@ def load_image_from_url(
     
     filename = _url_to_filename(url)
     filepath = os.path.join(cache_dir, filename)
-    # os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
 
     # 1 -> Load from cache if exists
     if os.path.exists(filepath):
@@ -69,10 +69,7 @@ class ProductImageDataset(Dataset):
     def __init__(self, df, transform=None, image_dir=None):
         self.df = df
         self.transform = transform
-        self.image_dir = image_dir 
-
-        if self.image_dir:
-            os.makedirs(self.image_dir, exist_ok=True)
+        self.image_dir = image_dir # Pass this in explicitly
         
     def __len__(self):
         return len(self.df)
