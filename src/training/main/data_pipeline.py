@@ -111,7 +111,8 @@ def identity(y):
     return y
 
 def create_webdataset_loader(split, transform, shuffle=True):
-    shard_pattern = str(BASE_SHARD_DIR / split / f"{split}-*.tar")
+    shard_path = BASE_SHARD_DIR / split / f"{split}-*.tar"
+    shard_pattern = f"file:{shard_path.as_posix()}"
     print("Shard pattern:", shard_pattern)
     dataset = (
         wds.WebDataset(shard_pattern, resampled=shuffle, shardshuffle=shuffle)
