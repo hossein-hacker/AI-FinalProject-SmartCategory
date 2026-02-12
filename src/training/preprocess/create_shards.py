@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import webdataset as wds
 from tqdm import tqdm
+from data_pipeline import split_data
 
 IMAGE_DIR = '../../../data/raw/images/'
 CSV_PATH   = "../../../data/processed/products_cleaned.csv"
@@ -10,8 +11,15 @@ OUTPUT_DIR = "../../../data/raw/webdataset_shards"
 FAILED_URLS_PATH = 'failed_urls.txt'
 SHARD_SIZE = 5000  # images per shard
 
+# Create split directories
+TRAIN_DIR = os.path.join(OUTPUT_DIR, "train")
+VAL_DIR   = os.path.join(OUTPUT_DIR, "val")
+TEST_DIR  = os.path.join(OUTPUT_DIR, "test")
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(IMAGE_DIR, exist_ok=True)
+os.makedirs(TRAIN_DIR, exist_ok=True)
+os.makedirs(VAL_DIR, exist_ok=True)
+os.makedirs(TEST_DIR, exist_ok=True)
 
 def clean_df(df):
     def _url_to_filename(url):
@@ -36,35 +44,46 @@ def clean_df(df):
         df = df[~df['imgUrl'].isin(failed_urls)]
     except FileNotFoundError:
         pass
+
+    df = df[df['local_path'].notna()]
+    df = df[df['local_path'] != ""]
+
     return df
+
+def write_shards(df, output_dir, prefix):
+    print(f"Writing {prefix} shards... Total samples: {len(df)}")
+    with wds.ShardWriter(
+        os.path.join(output_dir, f"{prefix}-%05d.tar"),
+        maxcount=SHARD_SIZE
+    ) as sink:
+
+        for idx, row in tqdm(df.iterrows(), total=len(df)):
+            try:
+                with open(row['local_path'], "rb") as f:
+                    image_bytes = f.read()
+
+                sample = {
+                    "__key__": str(idx),
+                    "jpg": image_bytes,
+                    "cls": str(int(row['merged_category_id']))
+                }
+
+                sink.write(sample)
+
+            except Exception:
+                continue
 
 df = pd.read_csv(CSV_PATH)
 df = clean_df(df)
 
-df = df[df['local_path'].notna()]
-df = df[df['local_path'] != ""]
-
 print("Total samples:", len(df))
 
-with wds.ShardWriter(
-    os.path.join(OUTPUT_DIR, "dataset-%05d.tar"),
-    maxcount=SHARD_SIZE
-) as sink:
+train_df, val_df, test_df = split_data(df)
 
-    for idx, row in tqdm(df.iterrows(), total=len(df)):
-        try:
-            with open(row['local_path'], "rb") as f:
-                image_bytes = f.read()
+write_shards(train_df, TRAIN_DIR, "train")
+write_shards(val_df, VAL_DIR, "val")
+write_shards(test_df, TEST_DIR, "test")
 
-            sample = {
-                "__key__": str(idx),
-                "jpg": image_bytes,
-                "cls": str(int(row['merged_category_id']))
-            }
-
-            sink.write(sample)
-
-        except Exception:
-            continue
+print("All shards created successfully.")
 
 print("Shards created successfully.")
