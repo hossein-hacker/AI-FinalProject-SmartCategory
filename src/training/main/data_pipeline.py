@@ -95,17 +95,25 @@ def get_dataloaders(train_dataset, val_dataset, test_dataset):
 
     return train_loader, val_loader, test_loader
 
+def normalize_image(x):
+    return x.float() / 255.0
+
+
+def process_label(y):
+    return torch.tensor(int(y))
+
+
+def identity(y):
+    return y
+
 def create_webdataset_loader(split, transform, shuffle=True):
     shard_pattern = os.path.join(BASE_SHARD_DIR, split, f"{split}-*.tar")
     dataset = (
-        wds.WebDataset(shard_pattern, resampled=shuffle)
+        wds.WebDataset(shard_pattern, resampled=shuffle, shardshuffle=shuffle)
         .decode("torch")
         .to_tuple("jpg", "cls")
-        .map_tuple(
-            lambda x: x.float() / 255.0,
-            lambda y: torch.tensor(int(y))
-        )
-        .map_tuple(transform, lambda y: y)
+        .map_tuple(normalize_image, process_label)
+        .map_tuple(transform, identity)
     )
 
     if shuffle:
