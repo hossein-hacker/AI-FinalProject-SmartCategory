@@ -10,7 +10,11 @@ import webdataset as wds
 
 BATCH_SIZE = 256
 NUM_WORKERS = 12
-BASE_SHARD_DIR = "../../../data/raw/webdataset_shards"
+
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+BASE_SHARD_DIR = PROJECT_ROOT / "data" / "raw" / "webdataset_shards"
+
 
 def set_random_seeds():
     torch.manual_seed(42)
@@ -107,7 +111,8 @@ def identity(y):
     return y
 
 def create_webdataset_loader(split, transform, shuffle=True):
-    shard_pattern = os.path.join(BASE_SHARD_DIR, split, f"{split}-*.tar")
+    shard_pattern = str(BASE_SHARD_DIR / split / f"{split}-*.tar")
+    print("Shard pattern:", shard_pattern)
     dataset = (
         wds.WebDataset(shard_pattern, resampled=shuffle, shardshuffle=shuffle)
         .decode("torch")

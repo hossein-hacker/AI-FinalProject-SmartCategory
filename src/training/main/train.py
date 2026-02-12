@@ -61,6 +61,9 @@ def main():
     # train_loader, val_loader, test_loader = get_dataloaders()
     train_loader, val_loader, test_loader = get_webdataset_loaders()
 
+    from time import sleep
+    sleep(10)  # Give some time to read the printout before starting training
+    
     # 🔥 Automatically detect number of classes
     # (assumes labels are 0..N-1)
     sample_batch = next(iter(train_loader))
