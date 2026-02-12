@@ -94,16 +94,17 @@ def get_dataloaders(train_dataset, val_dataset, test_dataset):
 
 class ProductImageDataset(Dataset):
     def __init__(self, df: DataFrame, transform=None):
-        self.df = df.reset_index(drop=True)
+        df = df.reset_index(drop=True)
+        self.image_paths = df['local_path'].tolist()
+        self.labels = df['merged_category_id'].astype(int).tolist()
         self.transform = transform
 
     def __len__(self):
-        return len(self.df)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        img_path = row['local_path']
-        label = int(row['merged_category_id'])
+        img_path = self.image_paths[idx]
+        label = self.labels[idx]
 
         try:
             img = read_image(img_path)
