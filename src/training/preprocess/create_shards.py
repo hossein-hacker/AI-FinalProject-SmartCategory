@@ -85,5 +85,3 @@ write_shards(val_df, VAL_DIR, "val")
 write_shards(test_df, TEST_DIR, "test")
 
 print("All shards created successfully.")
-
-print("Shards created successfully.")

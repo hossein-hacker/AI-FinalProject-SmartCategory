@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from pandas import DataFrame
 import torch
@@ -5,9 +6,11 @@ import torchvision.transforms.v2 as transforms
 from torch.utils.data import Dataset, DataLoader
 from torchvision.io.image import read_image
 from sklearn.model_selection import train_test_split
+import webdataset as wds
 
 BATCH_SIZE = 256
 NUM_WORKERS = 12
+BASE_SHARD_DIR = "../../../data/raw/webdataset_shards"
 
 def set_random_seeds():
     torch.manual_seed(42)
@@ -90,6 +93,39 @@ def get_dataloaders(train_dataset, val_dataset, test_dataset):
         prefetch_factor=2
     )
 
+    return train_loader, val_loader, test_loader
+
+def create_webdataset_loader(split, transform, shuffle=True):
+    shard_pattern = os.path.join(BASE_SHARD_DIR, split, f"{split}-*.tar")
+    dataset = (
+        wds.WebDataset(shard_pattern, resampled=shuffle)
+        .decode("torch")
+        .to_tuple("jpg", "cls")
+        .map_tuple(
+            lambda x: x.float() / 255.0,
+            lambda y: torch.tensor(int(y))
+        )
+        .map_tuple(transform, lambda y: y)
+    )
+
+    if shuffle:
+        dataset = dataset.shuffle(10000)
+
+    dataset = dataset.batched(BATCH_SIZE)
+    loader = DataLoader(
+        dataset,
+        batch_size=None,
+        num_workers=NUM_WORKERS,
+        pin_memory=True,
+        persistent_workers=True
+    )
+    return loader
+
+def get_webdataset_loaders():
+    train_transform, val_test_transform = get_data_transforms()
+    train_loader = create_webdataset_loader("train", train_transform, shuffle=True)
+    val_loader = create_webdataset_loader("val", val_test_transform, shuffle=False)
+    test_loader = create_webdataset_loader("test", val_test_transform, shuffle=False)
     return train_loader, val_loader, test_loader
 
 class ProductImageDataset(Dataset):
