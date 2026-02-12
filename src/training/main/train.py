@@ -1,4 +1,7 @@
-from data_pipeline import get_webdataset_loaders, get_dataloaders, set_random_seeds
+import hashlib
+
+import pandas as pd
+from data_pipeline import get_webdataset_loaders, create_datasets, get_dataloaders, split_data, set_random_seeds
 import torch
 import torch.nn as nn
 from torchvision.models import resnet18
@@ -39,6 +42,39 @@ def unfreeze_module(module: nn.Module):
     for p in module.parameters():
         p.requires_grad = True
 
+IMAGE_DIR = '../../../data/raw/images/'
+FAILED_URLS_PATH = 'failed_urls.txt'
+DATA_PATH = '../../../data/processed/products_cleaned.csv'
+
+def clean_df(df):
+    def _url_to_filename(url):
+        return hashlib.md5(url.encode("utf-8")).hexdigest() + ".jpg"
+
+    cat_counts = df['merged_category_id'].value_counts()
+    valid_cats = cat_counts[cat_counts >= 25000].index.tolist()
+    df = df[df['merged_category_id'].isin(valid_cats)]
+    df = df.groupby('merged_category_id', group_keys=False).sample(
+        n=25000,
+        random_state=42
+    )
+    unique_cats = sorted(df['merged_category_id'].unique())
+    old_to_new_mapping = {old_id: new_id for new_id, old_id in enumerate(unique_cats)}
+    df['merged_category_id'] = df['merged_category_id'].map(old_to_new_mapping)
+    df['local_path'] = df['imgUrl'].fillna('').apply(
+        lambda u: os.path.join(IMAGE_DIR, _url_to_filename(u)) if isinstance(u, str) and u else ''
+    )
+    try:
+        with open(FAILED_URLS_PATH, 'r') as f:
+            failed_urls  = [line.strip() for line in f if line.strip()]
+        df = df[~df['imgUrl'].isin(failed_urls)]
+    except FileNotFoundError:
+        pass
+
+    df = df[df['local_path'].notna()]
+    df = df[df['local_path'] != ""]
+
+    return df
+
 
 def main():
 
@@ -58,12 +94,13 @@ def main():
         torch.backends.cudnn.benchmark = True
 
     # 🔥 Load loaders
-    # train_loader, val_loader, test_loader = get_dataloaders()
+    # df = pd.read_csv(DATA_PATH)
+    # df = clean_df(df)
+    # train_df, val_df, test_df = split_data(df)
+    # train_dataset, val_dataset, test_dataset = create_datasets(train_df, val_df, test_df)
+    # train_loader, val_loader, test_loader = get_dataloaders(train_dataset, val_dataset, test_dataset)
     train_loader, val_loader, test_loader = get_webdataset_loaders()
 
-    from time import sleep
-    sleep(10)  # Give some time to read the printout before starting training
-    
     # 🔥 Automatically detect number of classes
     # (assumes labels are 0..N-1)
     sample_batch = next(iter(train_loader))
