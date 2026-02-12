@@ -1,111 +1,218 @@
+import os
+from pathlib import Path
+from typing import Dict, Tuple
+
+import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torchvision import transforms
-import pandas as pd
-from PIL import Image
-import os
+from torchvision.models import resnet18
+from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import requests
-import hashlib
-import time
-from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataset_utils import ProductImageDataset
-from dataset_utils import _url_to_filename
-from dataset_utils import load_image_from_url
-from sklearn.model_selection import train_test_split
+
+from dataset_utils import ProductImageDataset, _url_to_filename
 
 
-def main():
-    
+def find_project_root(start_file: Path) -> Path:
+    cur = start_file.resolve()
+    for parent in [cur] + list(cur.parents):
+        if (parent / "data").exists() and (parent / "src").exists():
+            return parent
+    return start_file.resolve().parents[3]
+
+
+def set_seed(seed: int = 42) -> None:
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = True
 
 
-    # CONFIG
-    mapping_df = pd.read_csv('../../../data/processed/category_mapping.csv')
-    NUM_CLASSES = mapping_df['merged_category_id'].nunique()
+def freeze_all_except_fc(model: nn.Module) -> None:
+    for p in model.parameters():
+        p.requires_grad = False
+    for p in model.fc.parameters():
+        p.requires_grad = True
+
+
+def unfreeze_module(m: nn.Module) -> None:
+    for p in m.parameters():
+        p.requires_grad = True
+
+
+def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
+    try:
+        from torchvision.models import ResNet18_Weights
+        model = resnet18(weights=ResNet18_Weights.DEFAULT)
+    except Exception:
+        model = resnet18(pretrained=True)
+
+    in_features = model.fc.in_features
+    model.fc = nn.Linear(in_features, num_classes)
+
+    freeze_all_except_fc(model)
+
+    return model.to(device)
+
+
+def make_criterion(label_smoothing: float) -> nn.Module:
+    try:
+        return nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    except TypeError:
+        return nn.CrossEntropyLoss()
+
+
+def train_one_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    scaler: torch.cuda.amp.GradScaler,
+) -> float:
+    model.train()
+    total_loss = 0.0
+    use_amp = device.type == "cuda"
+
+    for x, y in tqdm(loader, desc="Training", leave=False):
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+
+        optimizer.zero_grad(set_to_none=True)
+
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            outputs = model(x)
+            loss = criterion(outputs, y)
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+        total_loss += float(loss.item())
+
+    return total_loss / max(1, len(loader))
+
+
+@torch.no_grad()
+def validate_one_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> Tuple[float, float]:
+    model.eval()
+    total_loss = 0.0
+    correct = 0
+    total = 0
+
+    for x, y in tqdm(loader, desc="Validation", leave=False):
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+
+        outputs = model(x)
+        loss = criterion(outputs, y)
+
+        total_loss += float(loss.item())
+        preds = outputs.argmax(dim=1)
+        total += int(y.size(0))
+        correct += int((preds == y).sum().item())
+
+    acc = 100.0 * correct / max(1, total)
+    return total_loss / max(1, len(loader)), acc
+
+
+def main() -> None:
+    set_seed(42)
 
     IMAGE_SIZE = (224, 224)
     BATCH_SIZE = 128
-    LEARNING_RATE = 1e-3
     NUM_EPOCHS = 10
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # --- Paths ---
-    DATA_PATH = '../../../data/processed/products_cleaned.csv'
-    IMAGE_DIR = '../../../data/raw/images/' # Directory where images are stored
-    
-    PRECACHE_STEP = False
 
-    print(f'Using device: {DEVICE}')
+    WARMUP_EPOCHS = 2
+    UNFREEZE_LAYER3 = False
 
-    full_df = pd.read_csv(DATA_PATH)
+    LR_HEAD = 1e-3
+    LR_BACKBONE = 1e-4
+    WEIGHT_DECAY = 1e-4
+
+    ETA_MIN = 1e-6
+    LABEL_SMOOTHING = 0.1
+
+    MIN_PER_CLASS = 25000
+    TARGET_PER_CLASS = 25000
+
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {DEVICE}")
+
+    this_file = Path(__file__).resolve()
+    repo_root = find_project_root(this_file)
+
+    data_path = repo_root / "data" / "processed" / "products_cleaned.csv"
+    image_dir = repo_root / "data" / "raw" / "images"
+    failed_urls_path = this_file.parent / "failed_urls.txt"
+
+    out_dir = repo_root / "models" / "phase2_resnet18"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"DATA_PATH:  {data_path}")
+    print(f"IMAGE_DIR:  {image_dir}")
+    print(f"OUT_DIR:    {out_dir}")
+    print(f"FAILED_URLS:{failed_urls_path if failed_urls_path.exists() else 'not found (skipping)'}")
+
+    if not data_path.exists():
+        raise FileNotFoundError(
+            f"Could not find products_cleaned.csv at: {data_path}\n"
+            f"Make sure you ran preprocessing and the file exists in data/processed/."
+        )
+
+    full_df = pd.read_csv(data_path)
     print(f"Original dataset size: {len(full_df)} images")
 
-    # ------------------------------------------------------------------------
-
-    # 1. Identify categories with >= 25,000 samples
-    cat_counts = full_df['merged_category_id'].value_counts()
-    valid_cats = cat_counts[cat_counts >= 25000].index.tolist()
-    print(f"Found {len(valid_cats)} categories with >= 25,000 images.")
-
-    # 2. Filter the dataframe to only these categories
-    full_df = full_df[full_df['merged_category_id'].isin(valid_cats)]
-
-    # 3. Downsample each category to exactly 25,000
-    # group_keys=False keeps the original index structure
-    full_df = full_df.groupby('merged_category_id', group_keys=False).sample(
-        n=25000,
-        random_state=42
+    image_dir.mkdir(parents=True, exist_ok=True)
+    full_df["local_path"] = full_df["imgUrl"].fillna("").apply(
+        lambda u: str(image_dir / _url_to_filename(u)) if isinstance(u, str) and u else ""
     )
 
-    # 4. CRITICAL: Remap category IDs to contiguous 0...N-1 range
-    # If we keep categories [0, 5, 10], the model will crash if we set NUM_CLASSES=3.
-    # We must remap them to [0, 1, 2].
-    unique_cats = sorted(full_df['merged_category_id'].unique())
+    sample_n = min(2000, len(full_df))
+    if sample_n > 0:
+        sample_paths = full_df["local_path"].sample(n=sample_n, random_state=42).tolist()
+        missing = sum(1 for p in sample_paths if (not p) or (not os.path.exists(p)))
+        missing_ratio = missing / sample_n
+        if missing_ratio > 0.05:
+            print(
+                f"Warning: {missing_ratio:.1%} of sampled images are missing on disk. "
+                f"Make sure images exist under: {image_dir}"
+            )
+
+    if failed_urls_path.exists():
+        failed_urls = [line.strip() for line in failed_urls_path.read_text().splitlines() if line.strip()]
+        before = len(full_df)
+        full_df = full_df[~full_df["imgUrl"].isin(failed_urls)]
+        after = len(full_df)
+        print(f"Removed {before - after} broken rows. Total valid samples: {after}")
+
+    cat_counts = full_df["merged_category_id"].value_counts()
+    valid_cats = cat_counts[cat_counts >= MIN_PER_CLASS].index.tolist()
+    print(f"Found {len(valid_cats)} categories with >= {MIN_PER_CLASS} images.")
+
+    full_df = full_df[full_df["merged_category_id"].isin(valid_cats)]
+
+    full_df = full_df.groupby("merged_category_id", group_keys=False).sample(
+        n=TARGET_PER_CLASS, random_state=42
+    )
+
+    unique_cats = sorted(full_df["merged_category_id"].unique())
     old_to_new_mapping = {old_id: new_id for new_id, old_id in enumerate(unique_cats)}
-    full_df['merged_category_id'] = full_df['merged_category_id'].map(old_to_new_mapping)
+    full_df["merged_category_id"] = full_df["merged_category_id"].map(old_to_new_mapping)
 
-    # 5. Update global configuration
-    # We overwrite the NUM_CLASSES from Step 2 to match this new filtered dataset
-    NUM_CLASSES = len(unique_cats)
+    num_classes = len(unique_cats)
+    print(f"Filtered & Balanced Dataset: {len(full_df)} images ({num_classes} classes x {TARGET_PER_CLASS} images)")
 
-    print(f"Filtered & Balanced Dataset: {len(full_df)} images ({NUM_CLASSES} classes x 25,000 images)")
-
-    # ------------------------------------------------------------------------
-
-    
-    os.makedirs(IMAGE_DIR, exist_ok=True)
-
-    full_df['local_path'] = full_df['imgUrl'].fillna('').apply(
-        lambda u: os.path.join(IMAGE_DIR, _url_to_filename(u)) if isinstance(u, str) and u else ''
+    pd.DataFrame([{"old_id": k, "new_id": v} for k, v in old_to_new_mapping.items()]).to_csv(
+        out_dir / "old_to_new_category_mapping.csv", index=False
     )
 
-    full_df.head()
-
-    # ------------------------------------------------------------------------
-
-    # Remove the failed URLs
-    failed_urls_path = 'failed_urls.txt'
-    try:
-        with open(failed_urls_path, 'r') as f:
-            failed_urls  = [line.strip() for line in f if line.strip()]
-
-        initial_count = len(full_df)
-        full_df = full_df[~full_df['imgUrl'].isin(failed_urls)]
-        final_count = len(full_df)
-
-        print(f"\nDataFrame Cleaned:")
-        print(f"- Removed {initial_count - final_count} broken rows.")
-        print(f"- Total valid samples: {final_count}")
-    except FileNotFoundError:
-        print(f"Failed URLs file {failed_urls_path} not found. No rows removed from dataset.")
-
-    # ------------------------------------------------------------------------
-
-    # Define separate transforms for training and validation
-    # The training transform includes augmentation from the augmentation_steps notebook
     train_transform = transforms.Compose([
         transforms.Resize(IMAGE_SIZE),
         transforms.RandomRotation(degrees=20, fill=255),
@@ -113,217 +220,156 @@ def main():
         transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # The validation transform is minimal (no augmentation)
     val_transform = transforms.Compose([
         transforms.Resize(IMAGE_SIZE),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # Split the dataframe into training and validation sets, ensuring stratification
-    train_df, val_df = train_test_split(full_df, test_size=0.2, random_state=42, stratify=full_df['merged_category_id'])
+    train_df, val_df = train_test_split(
+        full_df,
+        test_size=0.2,
+        random_state=42,
+        stratify=full_df["merged_category_id"],
+    )
 
-    # Create separate datasets for training and validation with their respective transforms
-    train_dataset = ProductImageDataset(df=train_df, transform=train_transform)
-    val_dataset = ProductImageDataset(df=val_df, transform=val_transform)
+    train_dataset = ProductImageDataset(df=train_df, transform=train_transform, image_dir=str(image_dir))
+    val_dataset = ProductImageDataset(df=val_df, transform=val_transform, image_dir=str(image_dir))
 
-    # Create DataLoaders
     num_workers = 8
-    print("Number of workers for DataLoader:", num_workers)
+    pin_memory = (DEVICE.type == "cuda")
+    persistent_workers = (num_workers > 0)
 
     train_loader = DataLoader(
-        train_dataset, 
-        batch_size=BATCH_SIZE, 
+        train_dataset,
+        batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=num_workers, 
-        pin_memory=False,
-        persistent_workers=True  # This keeps workers alive between epochs, saving time
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
     )
 
     val_loader = DataLoader(
-        val_dataset, 
-        batch_size=BATCH_SIZE, 
+        val_dataset,
+        batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=num_workers, 
-        pin_memory=False,
-        persistent_workers=True
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
     )
 
-    print(f'Found {len(full_df)} total images.')
-    print(f'Training set size: {len(train_dataset)}')
-    print(f'Validation set size: {len(val_dataset)}')
+    print(f"Training set size:   {len(train_dataset)}")
+    print(f"Validation set size: {len(val_dataset)}")
 
-    # ------------------------------------------------------------------------
+    model = build_resnet18(num_classes=num_classes, device=DEVICE)
 
-    if PRECACHE_STEP:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        
-        def cache_image_only(url):
-            return load_image_from_url(url) is not None
+    criterion = make_criterion(LABEL_SMOOTHING)
 
+    param_groups = [
+        {"params": model.fc.parameters(), "lr": LR_HEAD},
+        {"params": model.layer4.parameters(), "lr": LR_BACKBONE},
+    ]
+    if UNFREEZE_LAYER3:
+        param_groups.append({"params": model.layer3.parameters(), "lr": LR_BACKBONE})
 
-        MAX_WORKERS = 50
-        PREFETCH = 5000
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=WEIGHT_DECAY)
 
-        urls = full_df['imgUrl'].dropna().unique()[::-1]
-        total = len(urls)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=NUM_EPOCHS,
+        eta_min=ETA_MIN,
+    )
 
-        print(f"Found {total} unique image URLs to download.")
-        print(f"Using {MAX_WORKERS} workers, prefetch={PREFETCH}")
+    scaler = torch.cuda.amp.GradScaler(enabled=(DEVICE.type == "cuda"))
 
-        success = 0
+    history: Dict[str, list] = {"train_loss": [], "val_loss": [], "val_accuracy": []}
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = set()
+    best_acc = -1.0
+    best_path = out_dir / "best.pth"
+    last_path = out_dir / "last.pth"
 
-            pbar = tqdm(total=total, desc="Caching images", unit="img")
-
-            for url in urls:
-                futures.add(executor.submit(cache_image_only, url))
-
-                if len(futures) >= PREFETCH:
-                    done = next(as_completed(futures))
-                    futures.remove(done)
-
-                    if done.result():
-                        success += 1
-                    pbar.update(1)
-
-            # drain remaining
-            for future in as_completed(futures):
-                if future.result():
-                    success += 1
-                pbar.update(1)
-
-            pbar.close()
-
-        print(f"--- Image caching complete! Downloaded {success} images. ---")
-    else:
-        print("Skipping precaching step.")
-
-    # ------------------------------------------------------------------------
-
-    class SimpleCNN(nn.Module):
-        def __init__(self, num_classes):
-            super().__init__()
-            self.features = nn.Sequential(
-                nn.Conv2d(3, 32, 3, padding=1),
-                nn.BatchNorm2d(32),
-                nn.ReLU(),
-                nn.MaxPool2d(2),
-                nn.Conv2d(32, 64, 3, padding=1),
-                nn.BatchNorm2d(64),
-                nn.ReLU(),
-                nn.MaxPool2d(2),
-                nn.Conv2d(64, 128, 3, padding=1),
-                nn.BatchNorm2d(128),
-                nn.ReLU(),
-                nn.MaxPool2d(2),
-            )
-
-            self.classifier = nn.Sequential(
-                nn.AdaptiveAvgPool2d(1),
-                nn.Flatten(),
-                nn.Linear(128, num_classes)
-            )
-
-        def forward(self, x):
-            x = self.features(x)
-            return self.classifier(x)
-
-    model = SimpleCNN(num_classes=NUM_CLASSES).to(DEVICE)
-
-    # ------------------------------------------------------------------------
-
-    scaler = torch.amp.GradScaler('cuda')
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    criterion = nn.CrossEntropyLoss()
-    def train_one_epoch(model, loader, optimizer, criterion, device, scaler):
-        model.train()
-        total_loss = 0.0
-        for x, y in tqdm(loader, desc='Training'):
-            # x, y = x.to(device), y.to(device)
-            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            optimizer.zero_grad()
-
-            # Runs the forward pass in mixed precision (Float16)
-            with torch.amp.autocast('cuda'):
-                outputs = model(x)
-                loss = criterion(outputs, y)
-
-            # Scales loss and calls backward() to prevent underflow
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-
-            total_loss += loss.item()
-
-        return total_loss / len(loader)
-    def validate_one_epoch(model, loader, criterion, device):
-        model.eval()
-        total_loss = 0.0
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for x, y in tqdm(loader, desc='Validation'):
-                x, y = x.to(device), y.to(device)
-                outputs = model(x)
-                loss = criterion(outputs, y)
-                total_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
-                total += y.size(0)
-                correct += (predicted == y).sum().item()
-        accuracy = 100 * correct / total
-        return total_loss / len(loader), accuracy
-
-    # ------------------------------------------------------------------------
-    
-    os.makedirs("../../models/baseline/", exist_ok=True)
-
-    history = {'train_loss': [], 'val_loss': [], 'val_accuracy': []}
     for epoch in range(NUM_EPOCHS):
-        print(f'\n--- Epoch {epoch+1}/{NUM_EPOCHS} ---')
+        if epoch == WARMUP_EPOCHS:
+            unfreeze_module(model.layer4)
+            if UNFREEZE_LAYER3:
+                unfreeze_module(model.layer3)
+
+        print(f"\n--- Epoch {epoch + 1}/{NUM_EPOCHS} ---")
+
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, DEVICE, scaler)
-        val_loss, val_accuracy = validate_one_epoch(model, val_loader, criterion, DEVICE)
-        
-        history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_loss)
-        history['val_accuracy'].append(val_accuracy)
-        
-        epoch_loss = train_loss / len(train_loader)
+        val_loss, val_acc = validate_one_epoch(model, val_loader, criterion, DEVICE)
 
-        print(f'Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Accuracy: {val_accuracy:.2f}%')
+        scheduler.step()
 
-        # SAVE CHECKPOINT
-        checkpoint_path = f"../../models/baseline/checkpoint_epoch_{epoch+1}.pth"
-        torch.save({
-            'epoch': epoch + 1,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': epoch_loss,
-        }, checkpoint_path)
-        print(f"Saved checkpoint to {checkpoint_path}")
+        history["train_loss"].append(train_loss)
+        history["val_loss"].append(val_loss)
+        history["val_accuracy"].append(val_acc)
 
-    print('--- Training Complete ---')
+        lrs = [pg["lr"] for pg in optimizer.param_groups]
+        print(
+            f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
+            f"Val Acc: {val_acc:.2f}% | LRs: {[f'{lr:.2e}' for lr in lrs]}"
+        )
 
-    # ------------------------------------------------------------------------
+        torch.save(
+            {
+                "epoch": epoch + 1,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "val_accuracy": val_acc,
+                "num_classes": num_classes,
+            },
+            last_path,
+        )
+
+        if val_acc > best_acc:
+            best_acc = val_acc
+            torch.save(
+                {
+                    "epoch": epoch + 1,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "best_val_accuracy": best_acc,
+                    "num_classes": num_classes,
+                    "config": {
+                        "image_size": IMAGE_SIZE,
+                        "batch_size": BATCH_SIZE,
+                        "num_epochs": NUM_EPOCHS,
+                        "warmup_epochs": WARMUP_EPOCHS,
+                        "unfreeze_layer3": UNFREEZE_LAYER3,
+                        "lr_head": LR_HEAD,
+                        "lr_backbone": LR_BACKBONE,
+                        "weight_decay": WEIGHT_DECAY,
+                        "label_smoothing": LABEL_SMOOTHING,
+                        "min_per_class": MIN_PER_CLASS,
+                        "target_per_class": TARGET_PER_CLASS,
+                    },
+                },
+                best_path,
+            )
+            print(f"Saved BEST checkpoint to {best_path} (best_acc={best_acc:.2f}%)")
+
+    print("\n--- Training Complete ---")
+    print(f"Best Validation Accuracy: {best_acc:.2f}%")
+    print(f"Best checkpoint: {best_path}")
+    print(f"Last checkpoint: {last_path}")
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
-    ax1.plot(history['train_loss'], label='Training Loss')
-    ax1.plot(history['val_loss'], label='Validation Loss')
-    ax1.set_title('Loss Curves')
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
+    ax1.plot(history["train_loss"], label="Training Loss")
+    ax1.plot(history["val_loss"], label="Validation Loss")
+    ax1.set_title("Loss Curves")
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Loss")
     ax1.legend()
 
-    ax2.plot(history['val_accuracy'], label='Validation Accuracy', color='orange')
-    ax2.set_title('Validation Accuracy')
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Accuracy (%)')
+    ax2.plot(history["val_accuracy"], label="Validation Accuracy")
+    ax2.set_title("Validation Accuracy")
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Accuracy (%)")
     ax2.legend()
 
     plt.tight_layout()
