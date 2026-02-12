@@ -7,6 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.io.image import read_image
 from sklearn.model_selection import train_test_split
 import webdataset as wds
+import glob
 
 BATCH_SIZE = 256
 NUM_WORKERS = 12
@@ -111,11 +112,17 @@ def identity(y):
     return y
 
 def create_webdataset_loader(split, transform, shuffle=True):
-    shard_path = BASE_SHARD_DIR / split / f"{split}-*.tar"
-    shard_pattern = f"file:{shard_path.as_posix()}"
-    print("Shard pattern:", shard_pattern)
+    
+    shard_path_pattern = BASE_SHARD_DIR / split / f"{split}-*.tar"
+    found_shards = sorted(glob.glob(str(shard_path_pattern)))
+    if not found_shards:
+        raise FileNotFoundError(f"No .tar shards found matching: {shard_path_pattern}")
+    
+    shard_urls = [f"file:{Path(s).as_posix()}" for s in found_shards]
+    print(f"[{split}] Found {len(shard_urls)} shards. Pattern: {shard_path_pattern}")
+
     dataset = (
-        wds.WebDataset(shard_pattern, resampled=shuffle, shardshuffle=shuffle)
+        wds.WebDataset(shard_urls, resampled=shuffle, shardshuffle=shuffle)
         .decode("torch")
         .to_tuple("jpg", "cls")
         .map_tuple(normalize_image, process_label)
@@ -123,7 +130,7 @@ def create_webdataset_loader(split, transform, shuffle=True):
     )
 
     if shuffle:
-        dataset = dataset.shuffle(10000)
+        dataset = dataset.shuffle(8000)
 
     dataset = dataset.batched(BATCH_SIZE)
     loader = DataLoader(
