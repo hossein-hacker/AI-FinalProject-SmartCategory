@@ -235,9 +235,9 @@ def main():
 
     # ------------------------------------------------------------------------
 
+    scaler = torch.amp.GradScaler('cuda')
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss()
-    scaler = torch.cuda.amp.GradScaler(DEVICE)
     def train_one_epoch(model, loader, optimizer, criterion, device, scaler):
         model.train()
         total_loss = 0.0
@@ -247,7 +247,7 @@ def main():
             optimizer.zero_grad()
 
             # Runs the forward pass in mixed precision (Float16)
-            with torch.cuda.amp.autocast(DEVICE):
+            with torch.amp.autocast('cuda'):
                 outputs = model(x)
                 loss = criterion(outputs, y)
 
@@ -278,6 +278,8 @@ def main():
 
     # ------------------------------------------------------------------------
     
+    os.makedirs("../../models/baseline/", exist_ok=True)
+
     history = {'train_loss': [], 'val_loss': [], 'val_accuracy': []}
     for epoch in range(NUM_EPOCHS):
         print(f'\n--- Epoch {epoch+1}/{NUM_EPOCHS} ---')
