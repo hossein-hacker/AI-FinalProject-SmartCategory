@@ -20,9 +20,9 @@ def clean_df(df):
     cat_counts = df['merged_category_id'].value_counts()
     valid_cats = cat_counts[cat_counts >= 25000].index.tolist()
     df = df[df['merged_category_id'].isin(valid_cats)]
-    df = (
-        df.groupby('merged_category_id', group_keys=False)
-        .apply(lambda x: x.sample(25000, random_state=42), include_groups=False)
+    df = df.groupby('merged_category_id', group_keys=False).sample(
+        n=25000,
+        random_state=42
     )
     unique_cats = sorted(df['merged_category_id'].unique())
     old_to_new_mapping = {old_id: new_id for new_id, old_id in enumerate(unique_cats)}

@@ -55,9 +55,9 @@ def main():
 
     # 3. Downsample each category to exactly 25,000
     # group_keys=False keeps the original index structure
-    full_df = (
-        full_df.groupby('merged_category_id', group_keys=False)
-        .apply(lambda x: x.sample(25000, random_state=42), include_groups=False)
+    full_df = full_df.groupby('merged_category_id', group_keys=False).sample(
+        n=25000,
+        random_state=42
     )
 
     # 4. CRITICAL: Remap category IDs to contiguous 0...N-1 range
