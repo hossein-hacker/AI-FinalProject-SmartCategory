@@ -21,8 +21,7 @@ val_accuracies = []
 epochs = []
 
 for ckpt_path in checkpoint_files:
-    checkpoint = torch.load(ckpt_path, map_location=DEVICE)
-
+    checkpoint = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
     epochs.append(checkpoint["epoch"])
     train_losses.append(checkpoint["train_loss"])
     val_losses.append(checkpoint["val_loss"])
@@ -30,6 +29,9 @@ for ckpt_path in checkpoint_files:
 
 print(f"Loaded {len(epochs)} checkpoints.")
 
+print("Epochs:", epochs)
+print("Train Losses:", train_losses)
+print("Val Losses:", val_losses)
 
 plt.figure(figsize=(12, 5))
 
