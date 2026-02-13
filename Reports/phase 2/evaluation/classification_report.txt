@@ -1,0 +1,55 @@
+MODEL EVALUATION REPORT
+Overall Accuracy: 41.24%
+--------------------------------------------------
+Class Mapping (ID in Model : Original Name):
+0: Garment Bags
+1: Boys' Shoes
+2: Video Game Consoles & Accessories
+3: Girls' Accessories
+4: Industrial Materials
+5: Cell Phones & Accessories
+6: Baby Care Products
+7: Bath Products
+8: Fabric Decorating
+9: Vehicle Electronics
+10: Lighting & Ceiling Fans
+11: Toys & Games
+12: Furniture
+13: Automotive Tools & Equipment
+14: Baby Gifts
+15: Computer Components
+16: Girls' Jewelry
+17: Arts & Crafts Supplies
+18: Small Animal Supplies
+19: Accessories & Supplies
+20: Tablet Accessories
+21: Home Use Medical Supplies & Equipment
+--------------------------------------------------
+                                           precision    recall  f1-score   support
+
+                          0: Garment Bags       0.83      0.79      0.81      1250
+                           1: Boys' Shoes       0.72      0.22      0.33      1250
+     2: Video Game Consoles & Accessories       0.56      0.41      0.47      1250
+                    3: Girls' Accessories       0.10      0.85      0.19      1250
+                  4: Industrial Materials       0.46      0.24      0.31      1250
+             5: Cell Phones & Accessories       0.72      0.42      0.53      1250
+                    6: Baby Care Products       0.28      0.06      0.10      1250
+                         7: Bath Products       0.44      0.36      0.40      1250
+                     8: Fabric Decorating       0.59      0.52      0.56      1250
+                   9: Vehicle Electronics       0.49      0.24      0.32      1250
+              10: Lighting & Ceiling Fans       0.70      0.60      0.64      1250
+                         11: Toys & Games       0.58      0.22      0.31      1250
+                            12: Furniture       0.57      0.47      0.52      1250
+         13: Automotive Tools & Equipment       0.42      0.19      0.26      1250
+                           14: Baby Gifts       0.52      0.37      0.44      1250
+                  15: Computer Components       0.61      0.69      0.65      1250
+                       16: Girls' Jewelry       0.70      0.34      0.46      1250
+               17: Arts & Crafts Supplies       0.31      0.10      0.16      1250
+                18: Small Animal Supplies       0.66      0.52      0.58      1250
+               19: Accessories & Supplies       0.40      0.23      0.29      1250
+                   20: Tablet Accessories       0.82      0.74      0.78      1250
+21: Home Use Medical Supplies & Equipment       0.51      0.48      0.49      1250
+
+                                 accuracy                           0.41     27500
+                                macro avg       0.55      0.41      0.44     27500
+                             weighted avg       0.55      0.41      0.44     27500
