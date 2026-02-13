@@ -39,11 +39,10 @@ def unfreeze_module(module: nn.Module):
     for p in module.parameters():
         p.requires_grad = True
 
-IMAGE_DIR = '../../../data/raw/images/'
-FAILED_URLS_PATH = 'failed_urls.txt'
-DATA_PATH = '../../../data/processed/products_cleaned.csv'
-
 def clean_df(df):
+    IMAGE_DIR = '../../../data/raw/images/'
+    FAILED_URLS_PATH = 'failed_urls.txt'
+
     def _url_to_filename(url):
         return hashlib.md5(url.encode("utf-8")).hexdigest() + ".jpg"
 
@@ -72,15 +71,44 @@ def clean_df(df):
 
     return df
 
+def load_latest_checkpoint(checkpoint_dir, device):
+    checkpoint_files = sorted(
+        checkpoint_dir.glob("checkpoint_epoch_*.pth"),
+        key=lambda x: int(x.stem.split("_")[-1])
+    )
+
+    if not checkpoint_files:
+        return None
+
+    latest_checkpoint_path = checkpoint_files[-1]
+    print(f"Loading checkpoint: {latest_checkpoint_path}")
+
+    checkpoint = torch.load(latest_checkpoint_path, map_location=device)
+    return checkpoint
+
+def load_best_checkpoint(best_model_path, device):
+    if not os.path.exists(best_model_path):
+        return None
+
+    print(f"Loading best model checkpoint: {best_model_path}")
+    checkpoint = torch.load(best_model_path, map_location=device)
+    return checkpoint
+
 def main():
     set_random_seeds()
 
+    CSV_PATH = '../../../data/processed/products_cleaned.csv'
     NUM_EPOCHS = 10
     LR_HEAD = 1e-3
     LR_BACKBONE = 1e-4
     WEIGHT_DECAY = 1e-4
     LABEL_SMOOTHING = 0.1
     ETA_MIN = 1e-6
+    checkpoint_dir = Path("../../models/main/checkpoints")
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    RESUME_EPOCHS = False
+    BEST_MODEL_PATH = "../../models/main/best_model.pth"
+
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
@@ -89,7 +117,7 @@ def main():
         torch.backends.cudnn.benchmark = True
 
     # 🔥 Load loaders
-    df = pd.read_csv(DATA_PATH)
+    df = pd.read_csv(CSV_PATH)
     df = clean_df(df)
     train_df, val_df, test_df = split_data(df)
     train_transform, val_test_transform = get_data_transforms()
@@ -117,7 +145,6 @@ def main():
 
     optimizer = torch.optim.AdamW(param_groups, weight_decay=WEIGHT_DECAY)
 
-
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=NUM_EPOCHS,
@@ -127,17 +154,57 @@ def main():
     scaler = torch.amp.GradScaler("cuda")
 
     history: Dict[str, list] = {"train_loss": [], "val_loss": [], "val_accuracy": []}
+    start_epoch = 0
 
-    best_acc = -1.0
+    checkpoint = load_latest_checkpoint(checkpoint_dir, DEVICE) if RESUME_EPOCHS else None
+    best_checkpoint = load_best_checkpoint(BEST_MODEL_PATH, DEVICE) if RESUME_EPOCHS else None
 
-    BEST_MODEL_PATH = "../../models/main/best_model.pth"
+    if checkpoint is not None:
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
-    for epoch in range(NUM_EPOCHS):
+        start_epoch = checkpoint["epoch"]
+
+        # Restore history if exists
+        if "history" in checkpoint:
+            history = checkpoint["history"]
+        else:
+            # reconstruct history from previous checkpoints
+            for ckpt_file in sorted(
+                checkpoint_dir.glob("checkpoint_epoch_*.pth"),
+                key=lambda x: int(x.stem.split("_")[-1])
+            ):
+                ckpt = torch.load(ckpt_file, map_location=DEVICE)
+                history["train_loss"].append(ckpt["train_loss"])
+                history["val_loss"].append(ckpt["val_loss"])
+                history["val_accuracy"].append(ckpt["val_accuracy"])
+        
+        if start_epoch >= 1:
+            unfreeze_module(model.layer4)
+
+        if start_epoch >= 3:
+            unfreeze_module(model.layer3)
+
+        print(f"Resuming training from epoch {start_epoch + 1}")
+
+    if best_checkpoint is not None:
+        if "best_val_accuracy" in best_checkpoint:
+            best_acc = best_checkpoint["best_val_accuracy"]
+        elif "val_accuracy" in best_checkpoint:
+            best_acc = best_checkpoint["val_accuracy"]
+        else:
+            best_acc = -1.0
+    else:
+        best_acc = -1.0
+
+    for epoch in range(start_epoch, NUM_EPOCHS):
         # Gradually unfreeze layer4 after first epoch
-        if epoch == 1:
+        if epoch == 1 and start_epoch <= 1:
             print("Unfreezing layer4...")
             unfreeze_module(model.layer4)
-        elif epoch == 3:
+        elif epoch == 3 and start_epoch <= 3:
             print("Unfreezing layer3...")
             unfreeze_module(model.layer3)
 
@@ -211,16 +278,7 @@ def main():
         if val_acc > best_acc:
             best_acc = val_acc
 
-            torch.save({
-                "epoch": epoch + 1,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-                "scaler_state_dict": scaler.state_dict(),
-                "best_val_accuracy": best_acc,
-                "num_classes": num_classes,
-                "history": history,
-            }, BEST_MODEL_PATH)
+            save_checkpoint(num_classes, model, optimizer, scheduler, scaler, history, epoch, train_loss, val_loss, best_acc, BEST_MODEL_PATH)
 
             print(f"Saved BEST model to {BEST_MODEL_PATH} (acc={best_acc:.2f}%)")
 
@@ -233,17 +291,7 @@ def main():
 
         checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch+1:03d}.pth"
 
-        torch.save({
-            "epoch": epoch + 1,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "scaler_state_dict": scaler.state_dict(),
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "val_accuracy": val_acc,
-            "num_classes": num_classes,
-        }, checkpoint_path)
+        save_checkpoint(num_classes, model, optimizer, scheduler, scaler, history, epoch, train_loss, val_loss, val_acc, checkpoint_path)
 
         print(f"Saved checkpoint to {checkpoint_path}")
 
@@ -255,7 +303,8 @@ def main():
     # ------------------
     print("\n--- Final Test Evaluation ---")
 
-    model.load_state_dict(torch.load(BEST_MODEL_PATH))
+    best_checkpoint = torch.load(BEST_MODEL_PATH, map_location=DEVICE)
+    model.load_state_dict(best_checkpoint["model_state_dict"])
     model.eval()
 
     test_loss = 0.0
@@ -281,7 +330,6 @@ def main():
     print(f"Test Loss: {test_loss:.4f}")
     print(f"Test Accuracy: {test_acc:.2f}%")
 
-
     print(f"Best Validation Accuracy: {best_acc:.2f}%")
 
     # Plot curves
@@ -298,6 +346,20 @@ def main():
     plt.title("Validation Accuracy")
 
     plt.show()
+
+def save_checkpoint(num_classes, model, optimizer, scheduler, scaler, history, epoch, train_loss, val_loss, val_acc, checkpoint_path):
+    torch.save({
+            "epoch": epoch + 1,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "scaler_state_dict": scaler.state_dict(),
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "val_accuracy": val_acc,
+            "num_classes": num_classes,
+            "history": history,
+        }, checkpoint_path)
 
 if __name__ == "__main__":
     main()
