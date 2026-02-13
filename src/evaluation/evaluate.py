@@ -12,6 +12,7 @@ from pathlib import Path
 from torchvision import transforms, models
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
+from data_pipeline import set_random_seeds, split_data, get_data_transforms, create_datasets, get_dataloaders
 
 def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
     try:
@@ -64,12 +65,14 @@ class ProductDataset(Dataset):
         return image, label
 
 def evaluate_model():
+    set_random_seeds()
+
     current_file_path = Path(__file__).resolve()
     project_root = current_file_path.parents[2]
     
     CSV_PATH = project_root / "data" / "processed" / "products_cleaned.csv"
     MODEL_PATH = project_root / "models" / "main" / "best_model.pth"
-    REPORT_DIR = project_root / "Reports"
+    REPORT_DIR = project_root / "Reports" / "phase 2" / "evaluation"
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -77,22 +80,13 @@ def evaluate_model():
 
     df = pd.read_csv(CSV_PATH)
     df = clean_df(df)
-    
     unique_cats = sorted(df['merged_category_id'].unique())
     class_names = [str(cat) for cat in unique_cats]
 
-    from sklearn.model_selection import train_test_split
-    _, temp_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df['merged_category_id'])
-    _, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['merged_category_id'])
-
-    test_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    test_dataset = ProductDataset(test_df, transform=test_transform)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4)
+    _, _, test_df = split_data(df)
+    _, test_transform = get_data_transforms()
+    _, _, test_dataset = create_datasets(None, None, test_df, None, test_transform)
+    None, None, test_loader = get_dataloaders(None, None, test_dataset)
 
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
     num_classes = checkpoint['num_classes']

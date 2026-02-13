@@ -13,7 +13,7 @@ BATCH_SIZE = 256
 NUM_WORKERS = 4
 
 from pathlib import Path
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BASE_SHARD_DIR = PROJECT_ROOT / "data" / "raw" / "webdataset_shards"
 
 
