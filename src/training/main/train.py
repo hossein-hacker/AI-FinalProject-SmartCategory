@@ -1,7 +1,7 @@
 import hashlib
 
 import pandas as pd
-from data_pipeline import get_webdataset_loaders, create_datasets, get_dataloaders, split_data, set_random_seeds
+from data_pipeline import get_webdataset_loaders, create_datasets, get_dataloaders, split_data, set_random_seeds, get_data_transforms
 import torch
 import torch.nn as nn
 from torchvision.models import resnet18
@@ -94,12 +94,13 @@ def main():
         torch.backends.cudnn.benchmark = True
 
     # 🔥 Load loaders
-    # df = pd.read_csv(DATA_PATH)
-    # df = clean_df(df)
-    # train_df, val_df, test_df = split_data(df)
-    # train_dataset, val_dataset, test_dataset = create_datasets(train_df, val_df, test_df)
-    # train_loader, val_loader, test_loader = get_dataloaders(train_dataset, val_dataset, test_dataset)
-    train_loader, val_loader, test_loader = get_webdataset_loaders()
+    df = pd.read_csv(DATA_PATH)
+    df = clean_df(df)
+    train_df, val_df, test_df = split_data(df)
+    train_transform, val_test_transform = get_data_transforms()
+    train_dataset, val_dataset, test_dataset = create_datasets(train_df, val_df, test_df, train_transform, val_test_transform)
+    train_loader, val_loader, test_loader = get_dataloaders(train_dataset, val_dataset, test_dataset, )
+    # train_loader, val_loader, test_loader = get_webdataset_loaders()
 
     # 🔥 Automatically detect number of classes
     # (assumes labels are 0..N-1)

@@ -10,7 +10,7 @@ import webdataset as wds
 import glob
 
 BATCH_SIZE = 256
-NUM_WORKERS = 12
+NUM_WORKERS = 4
 
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -130,7 +130,7 @@ def create_webdataset_loader(split, transform, shuffle=True):
     )
 
     if shuffle:
-        dataset = dataset.shuffle(8000)
+        dataset = dataset.shuffle(5000)
 
     dataset = dataset.batched(BATCH_SIZE)
     loader = DataLoader(
