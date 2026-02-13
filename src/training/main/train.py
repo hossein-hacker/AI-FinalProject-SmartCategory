@@ -83,7 +83,7 @@ def load_latest_checkpoint(checkpoint_dir, device):
     latest_checkpoint_path = checkpoint_files[-1]
     print(f"Loading checkpoint: {latest_checkpoint_path}")
 
-    checkpoint = torch.load(latest_checkpoint_path, map_location=device)
+    checkpoint = torch.load(latest_checkpoint_path, weights_only=False, map_location=device)
     return checkpoint
 
 def load_best_checkpoint(best_model_path, device):
@@ -91,7 +91,7 @@ def load_best_checkpoint(best_model_path, device):
         return None
 
     print(f"Loading best model checkpoint: {best_model_path}")
-    checkpoint = torch.load(best_model_path, map_location=device)
+    checkpoint = torch.load(best_model_path, weights_only=False, map_location=device)
     return checkpoint
 
 def main():
@@ -176,7 +176,7 @@ def main():
                 checkpoint_dir.glob("checkpoint_epoch_*.pth"),
                 key=lambda x: int(x.stem.split("_")[-1])
             ):
-                ckpt = torch.load(ckpt_file, map_location=DEVICE)
+                ckpt = torch.load(ckpt_file, weights_only=False, map_location=DEVICE)
                 history["train_loss"].append(ckpt["train_loss"])
                 history["val_loss"].append(ckpt["val_loss"])
                 history["val_accuracy"].append(ckpt["val_accuracy"])
@@ -303,7 +303,7 @@ def main():
     # ------------------
     print("\n--- Final Test Evaluation ---")
 
-    best_checkpoint = torch.load(BEST_MODEL_PATH, map_location=DEVICE)
+    best_checkpoint = torch.load(BEST_MODEL_PATH, weights_only=False, map_location=DEVICE)
     model.load_state_dict(best_checkpoint["model_state_dict"])
     model.eval()
 
