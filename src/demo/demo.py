@@ -87,7 +87,7 @@ def classify_product(input_img):
 demo = gr.Interface(
     fn=classify_product, 
     inputs=gr.Image(),
-    outputs="text",
+    outputs=gr.Label(num_top_classes=3),
     title="Smart Category Detector",
     description=f"Upload a product image to identify its category. This model was trained on {len(class_names)} specific high-volume categories.",
     theme="soft"
