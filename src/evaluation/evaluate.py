@@ -1,51 +1,128 @@
 import torch
+import torch.nn as nn
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
+import hashlib
+from tqdm import tqdm
 from sklearn.metrics import confusion_matrix, classification_report
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
+from pathlib import Path
+from torchvision import transforms, models
+from torch.utils.data import DataLoader, Dataset
+from PIL import Image
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model_path = '' 
-test_dir = '' 
+def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
+    try:
+        from torchvision.models import ResNet18_Weights
+        model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
+    except Exception:
+        model = models.resnet18(pretrained=True)
+    in_features = model.fc.in_features
+    model.fc = nn.Linear(in_features, num_classes)
+    return model.to(device)
 
-test_transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]
+def clean_df(df):
+    IMAGE_DIR = '../../../data/raw/images/'
+    FAILED_URLS_PATH = 'failed_urls.txt'
+    def _url_to_filename(url):
+        return hashlib.md5(url.encode("utf-8")).hexdigest() + ".jpg"
+    cat_counts = df['merged_category_id'].value_counts()
+    valid_cats = cat_counts[cat_counts >= 25000].index.tolist()
+    df = df[df['merged_category_id'].isin(valid_cats)]
+    df = df.groupby('merged_category_id', group_keys=False).sample(n=25000, random_state=42)
+    unique_cats = sorted(df['merged_category_id'].unique())
+    old_to_new_mapping = {old_id: new_id for new_id, old_id in enumerate(unique_cats)}
+    df['merged_category_id'] = df['merged_category_id'].map(old_to_new_mapping)
+    df['local_path'] = df['imgUrl'].fillna('').apply(
+        lambda u: os.path.join(IMAGE_DIR, _url_to_filename(u)) if isinstance(u, str) and u else ''
     )
-])
+    try:
+        with open(FAILED_URLS_PATH, 'r') as f:
+            failed_urls = [line.strip() for line in f if line.strip()]
+        df = df[~df['imgUrl'].isin(failed_urls)]
+    except FileNotFoundError:
+        pass
+    df = df[df['local_path'].notna()]
+    df = df[df['local_path'] != ""]
+    return df
 
-test_dataset = datasets.ImageFolder(test_dir, transform=test_transform)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-class_names = test_dataset.classes
+class ProductDataset(Dataset):
+    def __init__(self, df, transform=None):
+        self.df = df
+        self.transform = transform
+    def __len__(self):
+        return len(self.df)
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        img_path = row['local_path']
+        label = row['merged_category_id']
+        image = Image.open(img_path).convert("RGB")
+        if self.transform:
+            image = self.transform(image)
+        return image, label
 
-model = torch.load(model_path) 
-model.to(device)
-model.eval()
+def evaluate_model():
+    current_file_path = Path(__file__).resolve()
+    project_root = current_file_path.parents[2]
+    
+    CSV_PATH = project_root / "data" / "processed" / "products_cleaned.csv"
+    MODEL_PATH = project_root / "models" / "main" / "best_model.pth"
+    REPORT_DIR = project_root / "Reports"
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {DEVICE}")
 
-all_preds = []
-all_labels = []
+    df = pd.read_csv(CSV_PATH)
+    df = clean_df(df)
+    
+    unique_cats = sorted(df['merged_category_id'].unique())
+    class_names = [str(cat) for cat in unique_cats]
 
-with torch.no_grad():
-    for images, labels in test_loader:
-        images, labels = images.to(device), labels.to(device)
-        outputs = model(images)
-        _, preds = torch.max(outputs, 1)
-        
-        all_preds.extend(preds.cpu().numpy())
-        all_labels.extend(labels.cpu().numpy())
+    from sklearn.model_selection import train_test_split
+    _, temp_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df['merged_category_id'])
+    _, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['merged_category_id'])
 
-print("Classification Report:")
-print(classification_report(all_labels, all_preds, target_names=class_names))
+    test_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
-cm = confusion_matrix(all_labels, all_preds)
-plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt='d', xticklabels=class_names, yticklabels=class_names)
-plt.xlabel('Predicted')
-plt.ylabel('Actual')
-plt.title('Confusion Matrix')
-plt.show()
+    test_dataset = ProductDataset(test_df, transform=test_transform)
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4)
+
+    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+    num_classes = checkpoint['num_classes']
+    
+    model = build_resnet18(num_classes, DEVICE)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for images, labels in tqdm(test_loader, desc="Testing"):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            outputs = model(images)
+            _, preds = torch.max(outputs, 1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    report = classification_report(all_labels, all_preds, target_names=class_names)
+    accuracy = 100 * (np.array(all_preds) == np.array(all_labels)).mean()
+
+    with open(REPORT_DIR / "classification_report.txt", "w") as f:
+        f.write(f"Test Accuracy: {accuracy:.2f}%\n{'='*30}\n{report}")
+
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(confusion_matrix(all_labels, all_preds), annot=False, cmap='Blues')
+    plt.title(f'Confusion Matrix - Acc: {accuracy:.2f}%')
+    plt.savefig(REPORT_DIR / "test_evaluation_result.png")
+    plt.show()
+
+if __name__ == "__main__":
+    evaluate_model()
