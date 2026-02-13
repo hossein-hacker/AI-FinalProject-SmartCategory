@@ -61,6 +61,7 @@ def evaluate_model():
     project_root = current_file_path.parents[2]
     
     CSV_PATH = project_root / "data" / "processed" / "products_cleaned.csv"
+    MAPPING_PATH = project_root / "data" / "processed" / "category_mapping.csv"
     MODEL_PATH = project_root / "src" / "models" / "main" / "best_model.pth"
     REPORT_DIR = project_root / "Reports" / "phase 2" / "evaluation"
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -70,17 +71,20 @@ def evaluate_model():
 
     print("Loading data...")
     df = pd.read_csv(CSV_PATH)
+    mapping_df = pd.read_csv(MAPPING_PATH)
     df = clean_df(df, project_root)
     
-    unique_cats = sorted(df['merged_category_id'].unique())
-    class_names = [str(cat) for cat in unique_cats]
+    unique_original_ids = sorted(pd.read_csv(CSV_PATH)['merged_category_id'].value_counts().pipe(lambda x: x[x >= 25000]).index.tolist())
+    class_names = []
+    for i, orig_id in enumerate(unique_original_ids):
+        name = mapping_df[mapping_df['merged_category_id'] == orig_id]['merged_category_name'].iloc[0]
+        class_names.append(f"{i}: {name}")
 
-    print("Splitting datasets...")
+
+    print("Getting DataLoaders...")
     train_df, val_df, test_df = split_data(df)
     train_transform, val_test_transform = get_data_transforms()
     train_dataset, valid_dataset, test_dataset = create_datasets(train_df, val_df, test_df, train_transform, val_test_transform)
-    
-    print("Initializing DataLoaders...")
     _, _, test_loader = get_dataloaders(train_dataset, valid_dataset, test_dataset)
 
     print("Loading model weights...")
@@ -96,11 +100,10 @@ def evaluate_model():
     all_labels = []
 
     with torch.no_grad():
-        for images, labels in tqdm(test_loader, desc="Testing"):
-            images, labels = images.to(DEVICE, non_blocking=True), labels.to(DEVICE, non_blocking=True)
+        for images, labels in tqdm(test_loader, desc="Evaluating"):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
             outputs = model(images)
-            _, preds = torch.max(outputs, 1)
-            all_preds.extend(preds.cpu().numpy())
+            all_preds.extend(outputs.argmax(dim=1).cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
     # Added zero_division=0 to silence the sklearn warning
@@ -109,16 +112,28 @@ def evaluate_model():
 
     print(f"\nTest Accuracy: {accuracy:.2f}%")
 
-    # 4. Save Reports
     with open(REPORT_DIR / "classification_report.txt", "w") as f:
-        f.write(f"Test Accuracy: {accuracy:.2f}%\n{'='*30}\n{report}")
+        f.write(f"MODEL EVALUATION REPORT\n")
+        f.write(f"Overall Accuracy: {accuracy:.2f}%\n")
+        f.write("-" * 50 + "\n")
+        f.write("Class Mapping (ID in Model : Original Name):\n")
+        for name in class_names:
+            f.write(f"{name}\n")
+        f.write("-" * 50 + "\n")
+        f.write(report)
 
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(confusion_matrix(all_labels, all_preds), annot=False, cmap='Blues')
-    plt.title(f'Confusion Matrix - Acc: {accuracy:.2f}%')
+    plt.figure(figsize=(15, 12))
+    sns.heatmap(confusion_matrix(all_labels, all_preds), 
+                annot=True, fmt='d', cmap='Blues',
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title(f'Confusion Matrix (Acc: {accuracy:.2f}%)')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
     plt.savefig(REPORT_DIR / "test_evaluation_result.png")
-    print(f"Saved evaluation plots to {REPORT_DIR}")
     plt.show()
+    print(f"Evaluation complete. Files saved in {REPORT_DIR}")
 
 if __name__ == "__main__":
     evaluate_model()
