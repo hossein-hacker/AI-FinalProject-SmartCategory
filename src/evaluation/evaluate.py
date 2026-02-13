@@ -49,21 +49,6 @@ def clean_df(df):
     df = df[df['local_path'] != ""]
     return df
 
-class ProductDataset(Dataset):
-    def __init__(self, df, transform=None):
-        self.df = df
-        self.transform = transform
-    def __len__(self):
-        return len(self.df)
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        img_path = row['local_path']
-        label = row['merged_category_id']
-        image = Image.open(img_path).convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-        return image, label
-
 def evaluate_model():
     set_random_seeds()
 
@@ -71,7 +56,7 @@ def evaluate_model():
     project_root = current_file_path.parents[2]
     
     CSV_PATH = project_root / "data" / "processed" / "products_cleaned.csv"
-    MODEL_PATH = project_root / "models" / "main" / "best_model.pth"
+    MODEL_PATH = project_root / "src" / "models" / "main" / "best_model.pth"
     REPORT_DIR = project_root / "Reports" / "phase 2" / "evaluation"
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     
@@ -86,7 +71,7 @@ def evaluate_model():
     _, _, test_df = split_data(df)
     _, test_transform = get_data_transforms()
     _, _, test_dataset = create_datasets(None, None, test_df, None, test_transform)
-    None, None, test_loader = get_dataloaders(None, None, test_dataset)
+    _, _, test_loader = get_dataloaders(None, None, test_dataset)
 
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
     num_classes = checkpoint['num_classes']
