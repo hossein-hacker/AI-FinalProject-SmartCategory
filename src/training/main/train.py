@@ -1,5 +1,4 @@
 import hashlib
-
 import pandas as pd
 from data_pipeline import get_webdataset_loaders, create_datasets, get_dataloaders, split_data, set_random_seeds, get_data_transforms
 import torch
@@ -24,7 +23,6 @@ def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
 
     return model.to(device)
 
-
 def make_criterion(label_smoothing: float) -> nn.Module:
     try:
         return nn.CrossEntropyLoss(label_smoothing=label_smoothing)
@@ -36,7 +34,6 @@ def freeze_all_except_fc(model: nn.Module):
         p.requires_grad = False
     for p in model.fc.parameters():
         p.requires_grad = True
-
 
 def unfreeze_module(module: nn.Module):
     for p in module.parameters():
@@ -75,9 +72,7 @@ def clean_df(df):
 
     return df
 
-
 def main():
-
     set_random_seeds()
 
     NUM_EPOCHS = 10
@@ -303,7 +298,6 @@ def main():
     plt.title("Validation Accuracy")
 
     plt.show()
-
 
 if __name__ == "__main__":
     main()
