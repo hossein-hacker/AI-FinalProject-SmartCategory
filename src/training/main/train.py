@@ -19,7 +19,11 @@ def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
         model = resnet18(pretrained=True)
 
     in_features = model.fc.in_features
-    model.fc = nn.Linear(in_features, num_classes)
+    # model.fc = nn.Linear(in_features, num_classes)
+    model.fc = nn.Sequential(
+        nn.Dropout(0.4),
+        nn.Linear(in_features, num_classes)
+    )
 
     return model.to(device)
 
@@ -30,12 +34,14 @@ def make_criterion(label_smoothing: float) -> nn.Module:
         return nn.CrossEntropyLoss()
 
 def freeze_all_except_fc(model: nn.Module):
+    return
     for p in model.parameters():
         p.requires_grad = False
     for p in model.fc.parameters():
         p.requires_grad = True
 
 def unfreeze_module(module: nn.Module):
+    return
     for p in module.parameters():
         p.requires_grad = True
 
@@ -98,15 +104,15 @@ def main():
     set_random_seeds()
 
     CSV_PATH = '../../../data/processed/products_cleaned.csv'
-    NUM_EPOCHS = 10
+    NUM_EPOCHS = 20
     LR_HEAD = 1e-3
     LR_BACKBONE = 1e-4
-    WEIGHT_DECAY = 1e-4
+    WEIGHT_DECAY = 1e-3
     LABEL_SMOOTHING = 0.1
     ETA_MIN = 1e-6
     checkpoint_dir = Path("../../models/main/checkpoints")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    RESUME_EPOCHS = False
+    RESUME_EPOCHS = True
     BEST_MODEL_PATH = "../../models/main/best_model.pth"
 
 

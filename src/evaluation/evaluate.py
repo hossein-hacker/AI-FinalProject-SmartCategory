@@ -19,7 +19,10 @@ def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
     except Exception:
         model = models.resnet18(pretrained=True)
     in_features = model.fc.in_features
-    model.fc = nn.Linear(in_features, num_classes)
+    model.fc = nn.Sequential(
+        nn.Dropout(0.4),
+        nn.Linear(in_features, num_classes)
+    )
     return model.to(device)
 
 def clean_df(df, project_root):
