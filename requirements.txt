@@ -15,3 +15,4 @@ grad-cam
 requests
 gdown
 sentence-transformers
+gradio
